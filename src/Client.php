@@ -17,6 +17,7 @@ class Client
 	{
 		$this->portalBaseUrl = $portalBaseUrl;
 		$this->clientId = $clientId;
+		$this->setup();
 	}
 
 	public function setPortalBaseUrl(string $portalBaseUrl)
@@ -31,8 +32,6 @@ class Client
 
 	public function Login(string $username, string $password)
 	{
-		$this->setup();
-
 		$state = (new Helper())->generateUnique();
 		$nonce = (new Helper())->generateUnique();
 		$this->codeVerifier = (new Helper())->generateCodeVerifier();
@@ -144,7 +143,7 @@ class Client
 		$response = $this->client->request("POST", "https://sso.cloud-cfg.com/realms/login/protocol/openid-connect/token", [
 			"form_params" => [
 				"grant_type" => "refresh_token",
-				"refresh_token" => $this->token->refreshToken,
+				"refresh_token" => $this->token->refresh_token,
 				"client_id" => $this->clientId
 			]
 		]);
@@ -173,8 +172,11 @@ class Client
 		if ($data === false)
 			return false;
 		$token = json_decode($data);
-		$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
-		return true;
+		if (property_exists($token, "access_token") && property_exists($token, "expires_in") && property_exists($token, "refresh_expires_in") && property_exists($token, "refresh_token") && property_exists($token, "token_type") && property_exists($token, "id_token") && property_exists($token, "session_state") && property_exists($token, "scope")) {
+			$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
+			return true;
+		}
+		return false;
 	}
 
 	public function TokenToJsonFile(string $path): bool
@@ -188,7 +190,7 @@ class Client
 			"headers" => array_merge(
 				$header,
 				[
-					"Authorization" => "{$this->token->tokenType} {$this->token->accessToken}",
+					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
 				]
 			),
 			"query" => $query,
@@ -201,7 +203,7 @@ class Client
 			"headers" => array_merge(
 				$header,
 				[
-					"Authorization" => "{$this->token->tokenType} {$this->token->accessToken}",
+					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
 				]
 			),
 			"query" => $query,
@@ -214,7 +216,7 @@ class Client
 			"headers" => array_merge(
 				$header,
 				[
-					"Authorization" => "{$this->token->tokenType} {$this->token->accessToken}",
+					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
 				]
 			),
 			"query" => $query,
@@ -228,7 +230,7 @@ class Client
 			"headers" => array_merge(
 				$header,
 				[
-					"Authorization" => "{$this->token->tokenType} {$this->token->accessToken}",
+					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
 				]
 			),
 			"query" => $query,
@@ -242,7 +244,7 @@ class Client
 			"headers" => array_merge(
 				$header,
 				[
-					"Authorization" => "{$this->token->tokenType} {$this->token->accessToken}",
+					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
 				]
 			),
 			"query" => $query,

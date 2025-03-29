@@ -1,4 +1,4 @@
-# php-nfon-ssh
+# php-nfon-sso
 
 package to login to the nfon portals with the nfon sso
 
