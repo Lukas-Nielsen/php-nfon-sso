@@ -1,0 +1,20 @@
+{
+  "name": "ln/nfon_sso",
+  "version": "0.0.1",
+  "require": {
+    "guzzlehttp/guzzle": "^7.9",
+    "php": ">=7.4"
+  },
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "ln\\nfon_sso\\": "src/"
+    }
+  },
+  "authors": [
+    {
+      "name": "Lukas Nielsen",
+      "email": "moin@lukasnielsen.de"
+    }
+  ]
+}
