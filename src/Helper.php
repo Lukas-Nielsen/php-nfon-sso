@@ -29,14 +29,13 @@ class Helper
 	{
 		if (strpos($url, '#') !== false) {
 			[, $fragment] = explode('#', $url, 2);
-			parse_str($fragment, $queryParams);
-			return $queryParams['code'] ?? "";
-		}
-		if (strpos($url, '?') !== false) {
+		} elseif (strpos($url, '?') !== false) {
 			[, $fragment] = explode('?', $url, 2);
-			parse_str($fragment, $queryParams);
-			return $queryParams['code'] ?? "";
+		} else {
+			return "";
 		}
-		return "";
+
+		parse_str($fragment, $queryParams);
+		return $queryParams['code'] ?? "";
 	}
 }
