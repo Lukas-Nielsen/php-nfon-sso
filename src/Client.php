@@ -87,7 +87,7 @@ class Client
 		return new LoginResponse("", true);
 	}
 
-	public function OTP(string $url, int $otp)
+	public function OTP(string $url, string $otp)
 	{
 		// do otp
 		$response = $this->client->request("POST", $url, [
