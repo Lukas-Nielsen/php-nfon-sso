@@ -37,7 +37,7 @@ class Client
 		$this->codeVerifier = (new Helper())->generateCodeVerifier();
 		$code_challenge = (new Helper())->generateCodeChallenge($this->codeVerifier);
 
-		// get login form
+		// get username form
 		$response = $this->client->request("GET", "https://sso.cloud-cfg.com/realms/login/protocol/openid-connect/auth", [
 			"query" => [
 				"client_id" => $this->clientId,
@@ -59,7 +59,22 @@ class Client
 		$form = $dom->getElementById("kc-form-login");
 		$formUrl = $form->getAttribute("action");
 
-		// login
+		// login username
+		$response = $this->client->request("POST", $formUrl, [
+			"form_params" => [
+				"username" => $username
+			],
+			"allow_redirects" => false
+		]);
+
+		$html = $response->getBody()->__toString();
+		libxml_use_internal_errors(true);
+		$dom = new \DOMDocument();
+		$dom->loadHTML($html);
+		$form = $dom->getElementById("kc-otp-login-form");
+		$formUrl = $form->getAttribute("action");
+
+		// login username + password
 		$response = $this->client->request("POST", $formUrl, [
 			"form_params" => [
 				"username" => $username,
