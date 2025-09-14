@@ -52,10 +52,10 @@ class Client
 			],
 		]);
 
-		$html = $response->getBody()->__toString();
+		$d = $response->getBody()->__toString();
 		libxml_use_internal_errors(true);
 		$dom = new \DOMDocument();
-		$dom->loadHTML($html);
+		$dom->loadHTML($d);
 		$form = $dom->getElementById("kc-form-login");
 		$formUrl = $form->getAttribute("action");
 
@@ -67,11 +67,11 @@ class Client
 			"allow_redirects" => false
 		]);
 
-		$html = $response->getBody()->__toString();
+		$d = $response->getBody()->__toString();
 		libxml_use_internal_errors(true);
 		$dom = new \DOMDocument();
-		$dom->loadHTML($html);
-		$form = $dom->getElementById("kc-otp-login-form");
+		$dom->loadHTML($d);
+		$form = $dom->getElementById("kc-form-login");
 		$formUrl = $form->getAttribute("action");
 
 		// login username + password
@@ -87,10 +87,10 @@ class Client
 
 		if ($response->getStatusCode() === 200) {
 			// get otp form url
-			$html = $response->getBody()->__toString();
+			$d = $response->getBody()->__toString();
 			libxml_use_internal_errors(true);
 			$dom = new \DOMDocument();
-			$dom->loadHTML($html);
+			$dom->loadHTML($d);
 			$form = $dom->getElementById("kc-otp-login-form");
 			$formUrl = $form->getAttribute("action");
 			return new LoginResponse($formUrl, false);
