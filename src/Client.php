@@ -183,6 +183,8 @@ class Client
 
 	public function TokenFromJsonFile(string $path): bool
 	{
+		if (!file_exists($path))
+			return false;
 		$data = file_get_contents($path);
 		if ($data === false)
 			return false;
@@ -235,7 +237,7 @@ class Client
 				]
 			),
 			"query" => $query,
-			"json" => $payload,
+			"body" => json_encode($payload, JSON_UNESCAPED_SLASHES),
 		]);
 	}
 
@@ -249,7 +251,7 @@ class Client
 				]
 			),
 			"query" => $query,
-			"json" => $payload,
+			"body" => json_encode($payload, JSON_UNESCAPED_SLASHES),
 		]);
 	}
 
@@ -263,7 +265,7 @@ class Client
 				]
 			),
 			"query" => $query,
-			"json" => $payload,
+			"body" => json_encode($payload, JSON_UNESCAPED_SLASHES),
 		]);
 	}
 }
