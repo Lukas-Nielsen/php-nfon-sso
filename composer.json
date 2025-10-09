@@ -1,6 +1,6 @@
 {
   "name": "ln/nfon_sso",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "require": {
     "guzzlehttp/guzzle": "^7.9",
     "php": ">=7.4"
