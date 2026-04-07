@@ -92,8 +92,25 @@ class Client
 			$dom = new \DOMDocument();
 			$dom->loadHTML($d);
 			$form = $dom->getElementById("kc-otp-login-form");
-			$formUrl = $form->getAttribute("action");
-			return new LoginResponse($formUrl, false);
+
+			if ($form !== null) {
+				$formUrl = $form->getAttribute("action");
+				return new LoginResponse($formUrl, false);
+			} else {
+				$form = $dom->getElementById("kc-form-login");
+				$formUrl = $form->getAttribute("action");
+
+				// login username + password
+				$response = $this->client->request("POST", $formUrl, [
+					"form_params" => [
+						"username" => $username,
+						"password" => $password,
+						"rememberMe" => "on",
+						"credentialId" => ""
+					],
+					"allow_redirects" => false
+				]);
+			}
 		} else if ($response->getStatusCode() === 302) {
 			// fetch access token
 			return new LoginResponse("", !$this->fetchToken((new Helper())->getCodeFromUrl($response->getHeader("location")[0])));
