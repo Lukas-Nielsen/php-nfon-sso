@@ -201,6 +201,21 @@ class Client
 		return file_put_contents($path, json_encode($this->token)) !== false;
 	}
 
+	public function TokenFromJson(string $json): bool
+	{
+		$token = json_decode($json);
+		if (property_exists($token, "access_token") && property_exists($token, "expires_in") && property_exists($token, "refresh_expires_in") && property_exists($token, "refresh_token") && property_exists($token, "token_type") && property_exists($token, "id_token") && property_exists($token, "session_state") && property_exists($token, "scope")) {
+			$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
+			return true;
+		}
+		return false;
+	}
+
+	public function TokenToJson(): string
+	{
+		return json_encode($this->token);
+	}
+
 	public function get(string $uri, array $query = [], array $header = []): ResponseInterface
 	{
 		return $this->client->get($uri, [
