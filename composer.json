@@ -1,20 +1,20 @@
 {
-  "name": "ln/nfon_sso",
-  "version": "0.0.10",
-  "require": {
-    "guzzlehttp/guzzle": "^7.9",
-    "php": ">=7.4"
-  },
-  "license": "MIT",
-  "autoload": {
-    "psr-4": {
-      "ln\\nfon_sso\\": "src/"
-    }
-  },
-  "authors": [
-    {
-      "name": "Lukas Nielsen",
-      "email": "moin@lukasnielsen.de"
-    }
-  ]
+	"name": "ln/php-nfon-sso",
+	"description": "PHP port of the go-nfon-sso OAuth client for nfon SSO portals.",
+	"version": "0.1.0",
+	"type": "library",
+	"require": {
+		"php": ">=8.3",
+		"guzzlehttp/guzzle": "^7.0"
+	},
+	"autoload": {
+		"psr-4": {
+			"ln\\NfonSso\\": "src/"
+		}
+	},
+	"autoload-dev": {
+		"psr-4": {
+			"ln\\NfonSso\\Tests\\": "tests/"
+		}
+	}
 }

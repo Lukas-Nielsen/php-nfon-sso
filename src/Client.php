@@ -1,303 +1,536 @@
 <?php
-namespace ln\nfon_sso;
 
-use GuzzleHttp\Client as GuzzleClient;
-use Psr\Http\Message\ResponseInterface;
+declare(strict_types=1);
 
+namespace LukasNielsen\NfonSso;
 
-class Client
+use DateTimeImmutable;
+use GuzzleHttp\Client as HttpClient;
+use GuzzleHttp\Cookie\CookieJar;
+use GuzzleHttp\Exception\GuzzleException;
+use RuntimeException;
+
+final class Client
 {
-	protected string $portalBaseUrl;
-	protected string $clientId;
-	protected string $codeVerifier;
-	protected Token $token;
-	protected GuzzleClient $client;
+	private const string USER_AGENT = "php-nfon-sso";
+	private const string AUTH_BASE_URL = "https://sso.cloud-cfg.com/realms/login/protocol/openid-connect";
 
-	public function __construct(string $portalBaseUrl, string $clientId)
+	private string $portalBaseUrl;
+	private string $clientId;
+	private string $codeVerifier = "";
+	private string $username = "";
+	private string $password = "";
+	private string $otpSecret = "";
+	private bool $debug = false;
+	private int $requestCount = 0;
+	private Token $token;
+	private CookieJar $cookieJar;
+	private HttpClient $httpClient;
+	private ?DateTimeImmutable $tokenExpiresAt = null;
+
+	public function __construct(string $portalBaseUrl, string $clientId, ?HttpClient $httpClient = null)
 	{
 		$this->portalBaseUrl = $portalBaseUrl;
 		$this->clientId = $clientId;
-		$this->setup();
+		$this->token = new Token();
+		$this->cookieJar = CookieJar::fromArray([], $this->portalBaseUrl);
+		$this->httpClient = $httpClient ?? new HttpClient([
+			"http_errors" => false,
+			"allow_redirects" => ["max" => 20, "strict" => false],
+			"cookies" => $this->cookieJar,
+			"headers" => ["User-Agent" => self::USER_AGENT],
+		]);
 	}
 
-	public function setPortalBaseUrl(string $portalBaseUrl)
+	public function setHttpClient(HttpClient $httpClient): self
+	{
+		$this->httpClient = $httpClient;
+		return $this;
+	}
+
+	public function setPortalBaseUrl(string $portalBaseUrl): self
 	{
 		$this->portalBaseUrl = $portalBaseUrl;
+		return $this;
 	}
 
-	public function setClientId(string $clientId)
+	public function setClientId(string $clientId): self
 	{
 		$this->clientId = $clientId;
+		return $this;
 	}
 
-	public function Login(string $username, string $password)
+	public function setDebug(bool $debug): self
 	{
-		$state = (new Helper())->generateUnique();
-		$nonce = (new Helper())->generateUnique();
-		$this->codeVerifier = (new Helper())->generateCodeVerifier();
-		$code_challenge = (new Helper())->generateCodeChallenge($this->codeVerifier);
+		$this->debug = $debug;
+		return $this;
+	}
 
-		// get username form
-		$response = $this->client->request("GET", "https://sso.cloud-cfg.com/realms/login/protocol/openid-connect/auth", [
-			"query" => [
-				"client_id" => $this->clientId,
-				"redirect_uri" => $this->portalBaseUrl,
-				"state" => $state,
-				"response_mode" => "fragment",
-				"response_type" => "code",
-				"scope" => "openid",
-				"nonce" => $nonce,
-				"code_challenge" => $code_challenge,
-				"code_challenge_method" => "S256",
+	public function setUser(string $username, string $password, string $otpSecret): self
+	{
+		$this->username = $username;
+		$this->password = $password;
+		$this->otpSecret = $otpSecret;
+		return $this;
+	}
+
+	public function login(string $username, string $password): string
+	{
+		$state = Helpers::generateUnique(32);
+		$nonce = Helpers::generateUnique(32);
+		$this->codeVerifier = Helpers::generateCodeVerifier(43);
+		$codeChallenge = Helpers::generateCodeChallenge($this->codeVerifier);
+
+		$query = [
+			"client_id" => $this->clientId,
+			"redirect_uri" => $this->portalBaseUrl,
+			"state" => $state,
+			"response_mode" => "fragment",
+			"response_type" => "code",
+			"scope" => "openid",
+			"nonce" => $nonce,
+			"code_challenge" => $codeChallenge,
+			"code_challenge_method" => "S256",
+		];
+
+		$response = $this->request("GET", self::AUTH_BASE_URL . "/auth", ["query" => $query], false);
+		$formUrl = Helpers::extractFormActionFromBody((string) $response->getBody(), Helpers::FORM_LOGIN);
+
+		$response = $this->request(
+			"POST",
+			Helpers::resolveUrl(self::AUTH_BASE_URL, $formUrl),
+			[
+				"form_params" => ["username" => $username],
+				"allow_redirects" => false,
 			],
-		]);
+			false,
+		);
+		$formUrl = Helpers::extractFormActionFromBody((string) $response->getBody(), Helpers::FORM_LOGIN);
 
-		$d = $response->getBody()->__toString();
-		libxml_use_internal_errors(true);
-		$dom = new \DOMDocument();
-		$dom->loadHTML($d);
-		$form = $dom->getElementById("kc-form-login");
-		$formUrl = $form->getAttribute("action");
-
-		// login username
-		$response = $this->client->request("POST", $formUrl, [
-			"form_params" => [
-				"username" => $username
+		$response = $this->request(
+			"POST",
+			Helpers::resolveUrl(self::AUTH_BASE_URL, $formUrl),
+			[
+				"form_params" => [
+					"username" => $username,
+					"password" => $password,
+					"rememberMe" => "on",
+					"credentialId" => "",
+				],
+				"allow_redirects" => false,
 			],
-			"allow_redirects" => false
-		]);
-
-		$d = $response->getBody()->__toString();
-		libxml_use_internal_errors(true);
-		$dom = new \DOMDocument();
-		$dom->loadHTML($d);
-		$form = $dom->getElementById("kc-form-login");
-		$formUrl = $form->getAttribute("action");
-
-		// login username + password
-		$response = $this->client->request("POST", $formUrl, [
-			"form_params" => [
-				"username" => $username,
-				"password" => $password,
-				"rememberMe" => "on",
-				"credentialId" => ""
-			],
-			"allow_redirects" => false
-		]);
+			false,
+		);
 
 		if ($response->getStatusCode() === 200) {
-			// get otp form url
-			$d = $response->getBody()->__toString();
-			libxml_use_internal_errors(true);
-			$dom = new \DOMDocument();
-			$dom->loadHTML($d);
-			$form = $dom->getElementById("kc-otp-login-form");
-
-			if ($form !== null) {
-				$formUrl = $form->getAttribute("action");
-				return new LoginResponse($formUrl, false);
-			} else {
-				$form = $dom->getElementById("kc-form-login");
-				$formUrl = $form->getAttribute("action");
-
-				// login username + password
-				$response = $this->client->request("POST", $formUrl, [
-					"form_params" => [
-						"username" => $username,
-						"password" => $password,
-						"rememberMe" => "on",
-						"credentialId" => ""
-					],
-					"allow_redirects" => false
-				]);
-			}
-		} else if ($response->getStatusCode() === 302) {
-			// fetch access token
-			return new LoginResponse("", !$this->fetchToken((new Helper())->getCodeFromUrl($response->getHeader("location")[0])));
+			$otpFormUrl = Helpers::extractFormActionFromBody((string) $response->getBody(), Helpers::FORM_OTP);
+			return $otpFormUrl;
 		}
-
-		return new LoginResponse("", true);
-	}
-
-	public function OTP(string $url, string $otp)
-	{
-		// do otp
-		$response = $this->client->request("POST", $url, [
-			"form_params" => [
-				"otp" => $otp,
-				"login" => "Loggen+Sie+sich+ein"
-			],
-			"allow_redirects" => false
-		]);
 
 		if ($response->getStatusCode() === 302) {
-			// fetch access token
-			return new LoginResponse("", !$this->fetchToken((new Helper())->getCodeFromUrl($response->getHeader("location")[0])));
+			$this->fetchToken(Helpers::getCodeFromUrl((string) $response->getHeaderLine("Location")));
+			return "";
 		}
 
-		return new LoginResponse("", true);
+		throw new RuntimeException("Unexpected response while logging in: " . $response->getStatusCode());
 	}
 
-	private function setup()
+	public function otp(string $url, string $secret): string
 	{
-		$this->client = new GuzzleClient(
+		if (\strlen($secret) <= 6) {
+			throw new RuntimeException("OTP secret is too short");
+		}
+
+		$otp = Helpers::generateTotp($secret);
+		$response = $this->request(
+			"POST",
+			Helpers::resolveUrl(self::AUTH_BASE_URL, $url),
 			[
-				"headers" => [
-					"User-Agent" => "php-nfon-sso",
-				],
-				"cookies" => true,
-				"http_errors" => false,
-			]
+				"form_params" => ["otp" => $otp, "login" => "Loggen Sie sich ein"],
+				"allow_redirects" => false,
+			],
+			false,
 		);
-	}
 
-	protected function fetchToken(string $code)
-	{
-		$response = $this->client->request("POST", "https://sso.cloud-cfg.com/realms/login/protocol/openid-connect/token", [
-			"form_params" => [
-				"code" => $code,
-				"grant_type" => "authorization_code",
-				"client_id" => $this->clientId,
-				"redirect_uri" => $this->portalBaseUrl,
-				"code_verifier" => $this->codeVerifier
-			]
-		]);
-		if ($response->getStatusCode() === 200) {
-			$token = json_decode($response->getBody()->__tostring());
-			$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
-			return true;
+		if ($response->getStatusCode() === 302) {
+			$this->fetchToken(Helpers::getCodeFromUrl((string) $response->getHeaderLine("Location")));
+			return "";
 		}
-		return false;
+
+		$formUrl = Helpers::extractFormActionFromBody((string) $response->getBody(), Helpers::FORM_OTP);
+		throw new RuntimeException("OTP validation failed: " . $response->getStatusCode() . " - " . $formUrl);
 	}
 
-	public function RefreshToken(): bool
+	public function auth(): void
 	{
-		$response = $this->client->request("POST", "https://sso.cloud-cfg.com/realms/login/protocol/openid-connect/token", [
-			"form_params" => [
-				"grant_type" => "refresh_token",
-				"refresh_token" => $this->token->refresh_token,
-				"client_id" => $this->clientId
-			]
-		]);
-
-		if ($response->getStatusCode() === 200) {
-			$token = json_decode($response->getBody()->__tostring());
-			$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
-			return true;
+		$uri = $this->login($this->username, $this->password);
+		if ($uri !== "") {
+			$this->otp($uri, $this->otpSecret);
 		}
-		return false;
 	}
 
-	public function GetToken(): Token
+	public function logout(): void
+	{
+		try {
+			$this->request(
+				"GET",
+				self::AUTH_BASE_URL . "/logout",
+				[
+					"query" => [
+						"client_id" => $this->clientId,
+						"post_logout_redirect_uri" => $this->portalBaseUrl,
+						"id_token_hint" => $this->token->id_token,
+					],
+					"allow_redirects" => false,
+				],
+				false,
+			);
+		} catch (GuzzleException|RuntimeException $e) {
+			// The logout request is best-effort only.
+		}
+
+		$this->cookieJar = CookieJar::fromArray([], $this->portalBaseUrl);
+		$this->httpClient = new HttpClient([
+			"http_errors" => false,
+			"allow_redirects" => ["max" => 20, "strict" => false],
+			"cookies" => $this->cookieJar,
+			"headers" => ["User-Agent" => self::USER_AGENT],
+		]);
+	}
+
+	public function refreshToken(): void
+	{
+		$response = $this->request(
+			"POST",
+			self::AUTH_BASE_URL . "/token",
+			[
+				"form_params" => [
+					"grant_type" => "refresh_token",
+					"refresh_token" => $this->token->refresh_token,
+					"client_id" => $this->clientId,
+				],
+			],
+			false,
+		);
+
+		$payload = json_decode((string) $response->getBody(), true);
+		if (!\is_array($payload)) {
+			throw new RuntimeException("Invalid token refresh payload");
+		}
+
+		$this->token = Token::fromArray($payload);
+		$this->updateExpiry();
+	}
+
+	public function fetchToken(string $code): void
+	{
+		$response = $this->request(
+			"POST",
+			self::AUTH_BASE_URL . "/token",
+			[
+				"form_params" => [
+					"code" => $code,
+					"grant_type" => "authorization_code",
+					"client_id" => $this->clientId,
+					"redirect_uri" => $this->portalBaseUrl,
+					"code_verifier" => $this->codeVerifier,
+				],
+			],
+			false,
+		);
+
+		$payload = json_decode((string) $response->getBody(), true);
+		if (!\is_array($payload) || empty($payload["access_token"])) {
+			throw new RuntimeException("Token fetch failed: " . (string) $response->getBody());
+		}
+
+		$this->token = Token::fromArray($payload);
+		$this->updateExpiry();
+	}
+
+	public function getToken(): Token
 	{
 		return $this->token;
 	}
 
-	public function SetToken(Token $token): void
+	public function setToken(Token $token): void
 	{
 		$this->token = $token;
+		$this->updateExpiry();
 	}
 
-	public function TokenFromJsonFile(string $path): bool
+	public function getRequestCount(): int
 	{
-		if (!file_exists($path))
-			return false;
-		$data = file_get_contents($path);
-		if ($data === false)
-			return false;
-		$token = json_decode($data);
-		if (property_exists($token, "access_token") && property_exists($token, "expires_in") && property_exists($token, "refresh_expires_in") && property_exists($token, "refresh_token") && property_exists($token, "token_type") && property_exists($token, "id_token") && property_exists($token, "session_state") && property_exists($token, "scope")) {
-			$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
-			return true;
+		return $this->requestCount;
+	}
+
+	public function resetRequestCount(): void
+	{
+		$this->requestCount = 0;
+	}
+
+	public function tokenFromJsonFile(string $path): void
+	{
+		$content = file_get_contents($path);
+		if ($content === false) {
+			throw new RuntimeException("Unable to read token file: {$path}");
 		}
-		return false;
+
+		$this->tokenFromJson($content);
 	}
 
-	public function TokenToJsonFile(string $path): bool
+	public function tokenToJsonFile(string $path): void
 	{
-		return file_put_contents($path, json_encode($this->token)) !== false;
-	}
-
-	public function TokenFromJson(string $json): bool
-	{
-		$token = json_decode($json);
-		if (property_exists($token, "access_token") && property_exists($token, "expires_in") && property_exists($token, "refresh_expires_in") && property_exists($token, "refresh_token") && property_exists($token, "token_type") && property_exists($token, "id_token") && property_exists($token, "session_state") && property_exists($token, "scope")) {
-			$this->token = new Token($token->access_token, $token->expires_in, $token->refresh_expires_in, $token->refresh_token, $token->token_type, $token->id_token, $token->session_state, $token->scope);
-			return true;
+		$content = $this->tokenToJson();
+		if (file_put_contents($path, $content) === false) {
+			throw new RuntimeException("Unable to write token file: {$path}");
 		}
-		return false;
 	}
 
-	public function TokenToJson(): string
+	public function tokenFromJson(string $json): void
 	{
-		return json_encode($this->token);
+		$data = json_decode($json, true);
+		if (!\is_array($data)) {
+			throw new RuntimeException("Invalid JSON token payload");
+		}
+
+		$this->token = Token::fromArray($data);
+		$this->updateExpiry();
 	}
 
-	public function get(string $uri, array $query = [], array $header = []): ResponseInterface
+	public function tokenToJson(): string
 	{
-		return $this->client->get($uri, [
-			"headers" => array_merge(
-				$header,
-				[
-					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
-				]
-			),
+		return json_encode($this->token->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) ?: "{}";
+	}
+
+	public function get(
+		string $customer,
+		string $uri,
+		array $query = [],
+		array $header = [],
+	): \Psr\Http\Message\ResponseInterface {
+		return $this->doRequest($customer, "GET", $uri, null, $query, $header);
+	}
+
+	public function post(
+		string $customer,
+		string $uri,
+		mixed $payload = null,
+		array $query = [],
+		array $header = [],
+	): \Psr\Http\Message\ResponseInterface {
+		return $this->doRequest($customer, "POST", $uri, $payload, $query, $header);
+	}
+
+	public function put(
+		string $customer,
+		string $uri,
+		mixed $payload = null,
+		array $query = [],
+		array $header = [],
+	): \Psr\Http\Message\ResponseInterface {
+		return $this->doRequest($customer, "PUT", $uri, $payload, $query, $header);
+	}
+
+	public function patch(
+		string $customer,
+		string $uri,
+		mixed $payload = null,
+		array $query = [],
+		array $header = [],
+	): \Psr\Http\Message\ResponseInterface {
+		return $this->doRequest($customer, "PATCH", $uri, $payload, $query, $header);
+	}
+
+	public function delete(
+		string $customer,
+		string $uri,
+		array $query = [],
+		array $header = [],
+	): \Psr\Http\Message\ResponseInterface {
+		return $this->doRequest($customer, "DELETE", $uri, null, $query, $header);
+	}
+
+	public function getPortalApi(string $customer, string $uri, array $query = [], array $header = []): Response
+	{
+		$response = $this->doRequest($customer, "GET", $uri, null, $query, $header);
+		$payload = json_decode((string) $response->getBody(), true);
+		return \is_array($payload) ? Response::fromArray($payload) : new Response();
+	}
+
+	public function postPortalApi(
+		string $customer,
+		string $uri,
+		mixed $payload = null,
+		array $query = [],
+		array $header = [],
+	): Response {
+		$response = $this->doRequest($customer, "POST", $uri, $payload, $query, $header);
+		$payload = json_decode((string) $response->getBody(), true);
+		return \is_array($payload) ? Response::fromArray($payload) : new Response();
+	}
+
+	public function putPortalApi(
+		string $customer,
+		string $uri,
+		mixed $payload = null,
+		array $query = [],
+		array $header = [],
+	): Response {
+		$response = $this->doRequest($customer, "PUT", $uri, $payload, $query, $header);
+		$payload = json_decode((string) $response->getBody(), true);
+		return \is_array($payload) ? Response::fromArray($payload) : new Response();
+	}
+
+	public function uploadFile(
+		string $customer,
+		string $uri,
+		array $query = [],
+		array $header = [],
+		string $fieldName,
+		string $fileName,
+		string $mimeType,
+		array $formData = [],
+	): \Psr\Http\Message\ResponseInterface {
+		$this->requestCount++;
+		$this->validateToken();
+
+		$multipart = [
+			[
+				"name" => $fieldName,
+				"contents" => fopen($fileName, "rb"),
+				"filename" => basename($fileName),
+				"headers" => ["Content-Type" => $mimeType],
+			],
+		];
+
+		foreach ($formData as $key => $value) {
+			$multipart[] = ["name" => $key, "contents" => (string) $value];
+		}
+
+		$options = [
 			"query" => $query,
-		]);
+			"headers" => [...["User-Agent" => self::USER_AGENT . " (" . $customer . ")"], ...$header],
+			"multipart" => $multipart,
+			"allow_redirects" => true,
+		];
+
+		$options["headers"]["Authorization"] = $this->token->token_type . " " . $this->token->access_token;
+
+		return $this->httpClient->request("POST", $uri, $options);
 	}
 
-	public function delete(string $uri, array $query = [], array $header = []): ResponseInterface
-	{
-		return $this->client->delete($uri, [
-			"headers" => array_merge(
-				$header,
-				[
-					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
-				]
-			),
+	private function doRequest(
+		string $customer,
+		string $method,
+		string $uri,
+		mixed $payload = null,
+		array $query = [],
+		array $header = [],
+	): \Psr\Http\Message\ResponseInterface {
+		$this->requestCount++;
+		$this->validateToken();
+
+		$options = [
 			"query" => $query,
-		]);
+			"headers" => [
+				...[
+					"User-Agent" => self::USER_AGENT . " (" . $customer . ")",
+					"Authorization" => $this->token->token_type . " " . $this->token->access_token,
+				],
+				...$header,
+			],
+			"allow_redirects" => true,
+		];
+
+		if ($payload !== null) {
+			if (\is_array($payload) || \is_object($payload)) {
+				$options["json"] = $payload;
+			} else {
+				$options["body"] = (string) $payload;
+			}
+		}
+
+		return $this->request($method, $uri, $options, true);
 	}
 
-	public function post(string $uri, array $payload, array $query = [], array $header = []): ResponseInterface
-	{
-		return $this->client->post($uri, [
-			"headers" => array_merge(
-				$header,
-				[
-					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
-				]
-			),
-			"query" => $query,
-			"body" => json_encode($payload, JSON_UNESCAPED_SLASHES),
-		]);
+	private function request(
+		string $method,
+		string $uri,
+		array $options,
+		bool $checkStatus,
+	): \Psr\Http\Message\ResponseInterface {
+		try {
+			$response = $this->httpClient->request($method, $uri, $options);
+		} catch (GuzzleException $e) {
+			throw new RuntimeException("HTTP request failed: " . $e->getMessage(), 0, $e);
+		}
+
+		if ($checkStatus && $response->getStatusCode() >= 400) {
+			throw new RuntimeException(
+				"Request failed with status " . $response->getStatusCode() . ": " . (string) $response->getBody(),
+			);
+		}
+
+		return $response;
 	}
 
-	public function put(string $uri, array $payload, array $query = [], array $header = []): ResponseInterface
+	private function validateToken(): void
 	{
-		return $this->client->put($uri, [
-			"headers" => array_merge(
-				$header,
-				[
-					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
-				]
-			),
-			"query" => $query,
-			"body" => json_encode($payload, JSON_UNESCAPED_SLASHES),
-		]);
+		if ($this->token->access_token === "") {
+			$this->auth();
+			return;
+		}
+
+		if ($this->tokenExpiresAt === null) {
+			$this->updateExpiry();
+		}
+
+		if ($this->tokenExpiresAt !== null && time() >= ($this->tokenExpiresAt->getTimestamp() - 600)) {
+			$this->refreshToken();
+		}
 	}
 
-	public function patch(string $uri, array $payload, array $query = [], array $header = []): ResponseInterface
+	private function updateExpiry(): void
 	{
-		return $this->client->patch($uri, [
-			"headers" => array_merge(
-				$header,
-				[
-					"Authorization" => "{$this->token->token_type} {$this->token->access_token}",
-				]
-			),
-			"query" => $query,
-			"body" => json_encode($payload, JSON_UNESCAPED_SLASHES),
-		]);
+		if ($this->token->access_token === "") {
+			$this->tokenExpiresAt = null;
+			return;
+		}
+
+		try {
+			$this->tokenExpiresAt = $this->parseJwtExpiry($this->token->access_token);
+			return;
+		} catch (RuntimeException $e) {
+			$expiresIn = max(0, (int) $this->token->expires_in);
+			$this->tokenExpiresAt = new DateTimeImmutable("@" . (time() + $expiresIn));
+		}
+	}
+
+	private function parseJwtExpiry(string $jwt): DateTimeImmutable
+	{
+		$parts = explode(".", $jwt);
+		if (\count($parts) < 2) {
+			throw new RuntimeException("Invalid JWT token");
+		}
+
+		$payload = $parts[1];
+		$payload = str_replace(["-", "_"], ["+", "/"], $payload);
+		$padding = \strlen($payload) % 4;
+		if ($padding > 0) {
+			$payload .= str_repeat("=", 4 - $padding);
+		}
+
+		$decoded = base64_decode($payload, true);
+		if ($decoded === false) {
+			throw new RuntimeException("JWT payload could not be decoded");
+		}
+
+		$claims = json_decode($decoded, true);
+		if (!\is_array($claims) || !isset($claims["exp"])) {
+			throw new RuntimeException("JWT exp claim is missing");
+		}
+
+		return new DateTimeImmutable("@" . (int) $claims["exp"]);
 	}
 }
