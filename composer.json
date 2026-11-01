@@ -1,8 +1,9 @@
 {
 	"name": "ln/php-nfon-sso",
 	"description": "PHP port of the go-nfon-sso OAuth client for nfon SSO portals.",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"type": "library",
+	"license": "MIT",
 	"require": {
 		"php": ">=8.3",
 		"guzzlehttp/guzzle": "^7.0"
