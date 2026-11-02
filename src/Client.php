@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace LukasNielsen\NfonSso;
+namespace ln\NfonSso;
 
 use DateTimeImmutable;
 use GuzzleHttp\Client as HttpClient;
